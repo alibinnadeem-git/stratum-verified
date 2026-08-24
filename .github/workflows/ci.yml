@@ -17,3 +17,9 @@ jobs:
           cache-dependency-path: package.json
       - run: npm install --no-audit --no-fund
       - run: npm run build
+      - name: Verify production health and Block 1 regression
+        if: github.event_name == 'push'
+        run: |
+          sleep 20
+          curl --fail --show-error --silent https://stratum-verified.vercel.app/api/health
+          curl --fail --show-error --silent 'https://stratumvalidator-a.vercel.app/stratum/verified/v1/records/uat-20260824-first-proof?evidenceHash=2464336b26c0c0d51e4547dc0daaedbdeec01d931fb4f91e96a4f4704355f002'
