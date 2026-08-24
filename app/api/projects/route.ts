@@ -1,0 +1,7 @@
+import {NextResponse} from 'next/server';
+import {z} from 'zod';
+import {requireSession} from '@/lib/server/auth';
+import {query} from '@/lib/server/db';
+const Body=z.object({projectCode:z.string().min(2).max(80),name:z.string().min(2).max(180),clientName:z.string().max(180).optional(),address:z.string().max(300).optional(),status:z.string().max(40).default('ACTIVE')});
+export async function GET(){try{const s=await requireSession();const r=await query(`SELECT p.*,COUNT(DISTINCT a.id)::int asset_count,COUNT(DISTINCT CASE WHEN le.status='VERIFIED' THEN le.asset_id END)::int verified_asset_count FROM projects p LEFT JOIN assets a ON a.project_id=p.id LEFT JOIN lifecycle_events le ON le.project_id=p.id WHERE p.organization_id=$1 GROUP BY p.id ORDER BY p.created_at DESC`,[s.organizationId]);return NextResponse.json({items:r.rows})}catch(e:any){return NextResponse.json({error:e.message},{status:e.status||500})}}
+export async function POST(req:Request){try{const s=await requireSession(['SUPER_ADMIN','ORG_ADMIN','PROJECT_MANAGER']);const b=Body.parse(await req.json());const r=await query(`INSERT INTO projects(organization_id,project_code,name,client_name,address,status) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[s.organizationId,b.projectCode,b.name,b.clientName||null,b.address||null,b.status]);return NextResponse.json(r.rows[0],{status:201})}catch(e:any){return NextResponse.json({error:e.message},{status:e.status||400})}}
