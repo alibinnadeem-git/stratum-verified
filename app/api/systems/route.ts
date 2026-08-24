@@ -1,0 +1,7 @@
+import {NextResponse} from 'next/server';
+import {z} from 'zod';
+import {requireSession} from '@/lib/server/auth';
+import {query} from '@/lib/server/db';
+const Body=z.object({siteId:z.string().uuid(),parentSystemId:z.string().uuid().optional().nullable(),name:z.string().min(2).max(180),systemType:z.string().max(120).optional()});
+export async function GET(){try{const s=await requireSession();const r=await query(`SELECT sy.*,si.name site_name,p.name project_name FROM systems sy JOIN sites si ON si.id=sy.site_id LEFT JOIN projects p ON p.id=si.project_id WHERE sy.organization_id=$1 ORDER BY sy.created_at DESC`,[s.organizationId]);return NextResponse.json({items:r.rows})}catch(e:any){return NextResponse.json({error:e.message},{status:e.status||500})}}
+export async function POST(req:Request){try{const s=await requireSession(['SUPER_ADMIN','ORG_ADMIN','PROJECT_MANAGER']);const b=Body.parse(await req.json());const r=await query(`INSERT INTO systems(organization_id,site_id,parent_system_id,name,system_type) VALUES($1,$2,$3,$4,$5) RETURNING *`,[s.organizationId,b.siteId,b.parentSystemId||null,b.name,b.systemType||null]);return NextResponse.json(r.rows[0],{status:201})}catch(e:any){return NextResponse.json({error:e.message},{status:e.status||400})}}
