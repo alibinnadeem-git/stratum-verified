@@ -17,9 +17,20 @@ jobs:
           cache-dependency-path: package.json
       - run: npm install --no-audit --no-fund
       - run: npm run build
-      - name: Verify production health and Block 1 regression
+      - name: Verify permanent production proofs
         if: github.event_name == 'push'
         run: |
           sleep 20
           curl --fail --show-error --silent https://stratum-verified.vercel.app/api/health
           curl --fail --show-error --silent 'https://stratumvalidator-a.vercel.app/stratum/verified/v1/records/uat-20260824-first-proof?evidenceHash=2464336b26c0c0d51e4547dc0daaedbdeec01d931fb4f91e96a4f4704355f002'
+          curl --fail --show-error --silent 'https://stratum-verified.vercel.app/api/verify?q=STR-UAT-SWGR-001' | tee /tmp/block2.json
+          python - <<'PY'
+          import json
+          x=json.load(open('/tmp/block2.json'))
+          assert x.get('verified') is True, x
+          records=x.get('records') or []
+          b2=[r for r in records if int(r.get('ledger_block_height') or 0)==2]
+          assert b2, x
+          assert b2[0].get('ledger_tx_hash')=='f32cb992660a936f5aa89b562b6b711c7c74e55e8858d84a6a380072af37db14', x
+          print('Block 2 business proof regression verified')
+          PY
