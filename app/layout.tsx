@@ -1,14 +1,1 @@
-import './globals.css';
-
-export const metadata = {
-  title: 'STRATUM Verified',
-  description: 'Verified infrastructure lifecycle and provenance platform',
-};
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <html lang="en">
-      <body>{children}</body>
-    </html>
-  );
-}
+import './globals.css';import Shell from '@/components/Shell';export const metadata={title:'STRATUM Verified',description:'Verified infrastructure lifecycle and provenance platform'};export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="en"><body><Shell>{children}</Shell></body></html>}
