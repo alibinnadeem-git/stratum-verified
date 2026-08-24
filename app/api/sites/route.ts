@@ -1,0 +1,7 @@
+import {NextResponse} from 'next/server';
+import {z} from 'zod';
+import {requireSession} from '@/lib/server/auth';
+import {query} from '@/lib/server/db';
+const Body=z.object({projectId:z.string().uuid().optional().nullable(),name:z.string().min(2).max(180),address:z.string().max(300).optional(),latitude:z.number().optional(),longitude:z.number().optional()});
+export async function GET(){try{const s=await requireSession();const r=await query(`SELECT si.*,p.project_code,p.name project_name FROM sites si LEFT JOIN projects p ON p.id=si.project_id WHERE si.organization_id=$1 ORDER BY si.created_at DESC`,[s.organizationId]);return NextResponse.json({items:r.rows})}catch(e:any){return NextResponse.json({error:e.message},{status:e.status||500})}}
+export async function POST(req:Request){try{const s=await requireSession(['SUPER_ADMIN','ORG_ADMIN','PROJECT_MANAGER']);const b=Body.parse(await req.json());const r=await query(`INSERT INTO sites(organization_id,project_id,name,address,latitude,longitude) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[s.organizationId,b.projectId||null,b.name,b.address||null,b.latitude??null,b.longitude??null]);return NextResponse.json(r.rows[0],{status:201})}catch(e:any){return NextResponse.json({error:e.message},{status:e.status||400})}}
