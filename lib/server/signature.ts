@@ -1,0 +1,1 @@
+import {createPublicKey,verify} from 'crypto';export function verifyApprovalSignature(payloadHash:string,signatureB64:string,publicKeyJwk:JsonWebKey){try{const key=createPublicKey({key:publicKeyJwk as any,format:'jwk'});return verify('sha256',Buffer.from(payloadHash,'utf8'),{key,dsaEncoding:'ieee-p1363'},Buffer.from(signatureB64,'base64'))}catch{return false}}

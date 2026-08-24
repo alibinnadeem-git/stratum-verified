@@ -1,0 +1,1 @@
+export async function GET(){return Response.json({ok:true,service:'stratum-verified',network:process.env.STRATUM_CHAIN_ID||'stratum-devnet-1',ledgerAdapter:process.env.STRATUM_CHAIN_RPC_URL?'stratum-rpc':'deterministic-devnet',databaseConfigured:Boolean(process.env.DATABASE_URL),authConfigured:Boolean(process.env.AUTH_SECRET)})}
