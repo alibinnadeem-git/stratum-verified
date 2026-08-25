@@ -1,0 +1,66 @@
+name: STRATUM Security Release Candidate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security-release-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: package.json
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Production build
+        run: npm run build
+      - name: Verify release bundle exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f migrations/004_identity_hardening.sql
+          test -f migrations/005_project_access_approval_audit.sql
+          test -f migrations/006_passkeys_project_roles_audit_anchor.sql
+          test -f SECURITY_DEPLOYMENT.md
+          grep -q 'WEBAUTHN_RP_ID' SECURITY_DEPLOYMENT.md
+          grep -q 'WEBAUTHN_ORIGIN' SECURITY_DEPLOYMENT.md
+          grep -q 'CRON_SECRET' SECURITY_DEPLOYMENT.md
+      - name: Security source invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -R -q 'project_memberships' app lib migrations
+          grep -R -q 'AUDIT_ROOT' app lib migrations
+          grep -R -q 'webauthn' app lib package.json
+          grep -R -q 'pg_advisory' app lib
+          grep -R -q 'payload_hash' app/api/approvals lib migrations
+      - name: Permanent STRATUM Chain regressions
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 20
+          curl --fail --show-error --silent https://stratum-verified.vercel.app/api/health
+          curl --fail --show-error --silent 'https://stratumvalidator-a.vercel.app/stratum/verified/v1/records/uat-20260824-first-proof?evidenceHash=2464336b26c0c0d51e4547dc0daaedbdeec01d931fb4f91e96a4f4704355f002'
+          curl --fail --show-error --silent 'https://stratum-verified.vercel.app/api/verify?q=STR-UAT-SWGR-001' > /tmp/block2.json
+          python - <<'PY'
+          import json
+          x=json.load(open('/tmp/block2.json'))
+          assert x.get('verified') is True, x
+          records=x.get('records') or []
+          b2=[r for r in records if int(r.get('ledger_block_height') or 0)==2]
+          assert b2, x
+          assert b2[0].get('ledger_tx_hash')=='f32cb992660a936f5aa89b562b6b711c7c74e55e8858d84a6a380072af37db14', x
+          print('Permanent business proof regressions verified')
+          PY
