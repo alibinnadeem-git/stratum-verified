@@ -1,0 +1,7 @@
+import {NextResponse} from 'next/server';
+import {generateAuthenticationOptions} from '@simplewebauthn/server';
+import {requireSession} from '@/lib/server/auth';
+import {activePasskeys,webauthnConfig} from '@/lib/server/webauthn';
+import {query} from '@/lib/server/db';
+import {requireProjectAccess} from '@/lib/server/access';
+export async function POST(req:Request){try{const s=await requireSession();const body=await req.json();const e=await query<any>(`SELECT id,project_id,payload_sha256 FROM lifecycle_events WHERE id=$1 AND organization_id=$2 LIMIT 1`,[body.lifecycleEventId,s.organizationId]);const event=e.rows[0];if(!event)return NextResponse.json({error:'Lifecycle event not found'},{status:404});await requireProjectAccess(s,event.project_id);const creds=await activePasskeys(s.organizationId,s.userId);if(!creds.length)return NextResponse.json({error:'No active passkey is registered for this user'},{status:409});const cfg=webauthnConfig(req);const options=await generateAuthenticationOptions({rpID:cfg.rpID,userVerification:'required',allowCredentials:creds.map((x:any)=>({id:x.credential_id,transports:x.transports||[]}))});await query(`INSERT INTO webauthn_challenges(organization_id,user_id,purpose,challenge,payload_hash,lifecycle_event_id,expires_at) VALUES($1,$2,'APPROVAL',$3,$4,$5,now()+interval '3 minutes')`,[s.organizationId,s.userId,options.challenge,event.payload_sha256,event.id]);return NextResponse.json(options)}catch(e:any){return NextResponse.json({error:e.message},{status:e.status||400})}}
