@@ -3,11 +3,12 @@ import Link from 'next/link';
 import AssetQR from '@/components/AssetQR';
 import {assetLifecycle,liveAsset,internalEvidence} from '@/lib/server/live-views';
 import {requireSession} from '@/lib/server/auth';
+import {accessibleProjectIds} from '@/lib/server/access';
 export const dynamic='force-dynamic';
 const date=(d:Date|string|null)=>d?new Date(d).toLocaleString('en-US',{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'—';
 const short=(s:string|null,n=18)=>s?s.length>n*2?`${s.slice(0,n)}…${s.slice(-n)}`:s:'—';
 export default async function AssetDetail({params}:{params:Promise<{id:string}>}){
- const session=await requireSession();const {id}=await params;const asset=await liveAsset(session.organizationId,decodeURIComponent(id));if(!asset)notFound();
+ const session=await requireSession();const projectIds=await accessibleProjectIds(session);const {id}=await params;const asset=await liveAsset(session.organizationId,projectIds,decodeURIComponent(id));if(!asset)notFound();
  const [events,evidence]=await Promise.all([assetLifecycle(session.organizationId,asset.id),internalEvidence(session.organizationId,asset.id)]);
  const qr=`https://stratum-verified.vercel.app/verify?q=${encodeURIComponent(asset.asset_code)}`;
  return <><div className="page-head"><div><div className="eyebrow">Live Asset Passport · {asset.asset_code}</div><h1 className="title">{asset.name}</h1><p className="subtitle">{asset.manufacturer_name||'Manufacturer pending'} {asset.model||''} · Serial {asset.serial_number||'—'}</p></div><div className="button-row"><Link className="ghost" href={`/verify?q=${encodeURIComponent(asset.asset_code)}`}>Public verify</Link><Link className="action" href="/workflows">+ Lifecycle event</Link></div></div>
