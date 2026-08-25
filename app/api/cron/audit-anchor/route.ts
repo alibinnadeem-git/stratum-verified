@@ -1,0 +1,5 @@
+import {NextResponse} from 'next/server';
+import {query} from '@/lib/server/db';
+import {anchorAuditHead} from '@/lib/server/audit-anchor';
+export const dynamic='force-dynamic';
+export async function GET(req:Request){try{const secret=process.env.CRON_SECRET;if(!secret||req.headers.get('authorization')!==`Bearer ${secret}`)return NextResponse.json({error:'Unauthorized'},{status:401});const orgs=await query<{organization_id:string}>(`SELECT DISTINCT al.organization_id FROM audit_log al WHERE al.event_hash IS NOT NULL AND NOT EXISTS(SELECT 1 FROM audit_anchors aa WHERE aa.organization_id=al.organization_id AND aa.audit_event_id=(SELECT x.id FROM audit_log x WHERE x.organization_id=al.organization_id AND x.event_hash IS NOT NULL ORDER BY x.id DESC LIMIT 1))`);const results=[] as any[];for(const x of orgs.rows){try{results.push({organizationId:x.organization_id,...await anchorAuditHead(x.organization_id,null)})}catch(e:any){results.push({organizationId:x.organization_id,status:'ERROR',error:e.message})}}return NextResponse.json({checked:orgs.rows.length,results})}catch(e:any){return NextResponse.json({error:e.message},{status:500})}}
