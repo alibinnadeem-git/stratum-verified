@@ -1,3 +1,4 @@
 import OperationsConsole from '@/components/OperationsConsole';
+import PasskeyApprovalQueue from '@/components/PasskeyApprovalQueue';
 export const dynamic='force-dynamic';
-export default function Workflows(){return <><div className="page-head"><div><div className="eyebrow">Operational Control Plane</div><h1 className="title">Register. Perform. Prove.</h1><p className="subtitle">Create physical infrastructure records, submit lifecycle work with server-verified evidence, enforce separation of duties, and anchor approved proof to STRATUM Chain.</p></div><span className="badge">LIVE OPERATIONS</span></div><OperationsConsole/></>}
+export default function Workflows(){return <><div className="page-head"><div><div className="eyebrow">Operational Control Plane</div><h1 className="title">Register. Perform. Prove.</h1><p className="subtitle">Create physical infrastructure records, submit lifecycle work with server-verified evidence, enforce separation of duties, and anchor approved proof to STRATUM Chain.</p></div><span className="badge">LIVE OPERATIONS</span></div><OperationsConsole/><PasskeyApprovalQueue/></>}
