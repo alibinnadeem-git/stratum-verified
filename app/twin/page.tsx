@@ -1,10 +1,12 @@
 import TwinWorkspace,{TwinAsset} from '@/components/TwinWorkspace';
 import {liveAssets} from '@/lib/server/live-views';
+import {requireSession} from '@/lib/server/auth';
 
 export const dynamic='force-dynamic';
 
 export default async function TwinPage(){
-  const rows=await liveAssets();
+  const session=await requireSession();
+  const rows=await liveAssets(session.organizationId);
   const assets:TwinAsset[]=rows.map(a=>({
     id:a.id,asset_code:a.asset_code,asset_type:a.asset_type,name:a.name,model:a.model,serial_number:a.serial_number,location_label:a.location_label,status:a.status,project_code:a.project_code,project_name:a.project_name,site_name:a.site_name,system_name:a.system_name,manufacturer_name:a.manufacturer_name,latest_event_type:a.latest_event_type,ledger_network:a.ledger_network,ledger_tx_hash:a.ledger_tx_hash,ledger_block_height:a.ledger_block_height
   }));
