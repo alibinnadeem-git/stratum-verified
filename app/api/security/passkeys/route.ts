@@ -1,0 +1,7 @@
+import {NextResponse} from 'next/server';
+import {z} from 'zod';
+import {requireSession} from '@/lib/server/auth';
+import {query,tx} from '@/lib/server/db';
+const Revoke=z.object({id:z.string().uuid()});
+export async function GET(){try{const s=await requireSession();const r=await query(`SELECT id,credential_id,label,device_type,backed_up,created_at,last_used_at,revoked_at FROM webauthn_credentials WHERE organization_id=$1 AND user_id=$2 ORDER BY created_at DESC`,[s.organizationId,s.userId]);return NextResponse.json({items:r.rows})}catch(e:any){return NextResponse.json({error:e.message},{status:e.status||500})}}
+export async function DELETE(req:Request){try{const s=await requireSession();const b=Revoke.parse(await req.json());const out=await tx(async c=>{const r=await c.query(`UPDATE webauthn_credentials SET revoked_at=now(),revoked_by=$1 WHERE id=$2 AND organization_id=$3 AND user_id=$1 AND revoked_at IS NULL RETURNING id,credential_id,label`,[s.userId,b.id,s.organizationId]);if(!r.rows[0])throw Object.assign(new Error('Active passkey not found'),{status:404});await c.query(`INSERT INTO security_events(organization_id,user_id,actor_user_id,event_type,metadata) VALUES($1,$2,$2,'PASSKEY_REVOKED',$3::jsonb)`,[s.organizationId,s.userId,JSON.stringify({credentialId:r.rows[0].credential_id,label:r.rows[0].label})]);return r.rows[0]});return NextResponse.json({ok:true,...out})}catch(e:any){return NextResponse.json({error:e.message},{status:e.status||400})}}
