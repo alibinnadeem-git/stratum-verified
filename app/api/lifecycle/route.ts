@@ -24,7 +24,7 @@ export async function GET(req:Request){
     const asset=await query<{project_id:string}>(`SELECT project_id FROM assets WHERE id=$1 AND organization_id=$2 LIMIT 1`,[assetId,s.organizationId]);
     if(!asset.rows[0])return NextResponse.json({error:'Asset not found in the active organization.'},{status:404});
     await requireProjectAccess(s,asset.rows[0].project_id);
-    const events=await query<{event_type:string;status:string;occurred_at:Date;id:string}>(`SELECT id::text,event_type::text,status::text,occurred_at FROM lifecycle_events WHERE organization_id=$1 AND asset_id=$2 ORDER BY occurred_at ASC,created_at ASC`,[s.organizationId,assetId]);
+    const events=await query<{event_type:string;status:string;occurred_at:Date;id:string;evidence_count:number;approval_count:number}>(`SELECT le.id::text,le.event_type::text,le.status::text,le.occurred_at,(SELECT COUNT(*)::int FROM evidence ev WHERE ev.organization_id=le.organization_id AND ev.lifecycle_event_id=le.id) evidence_count,(SELECT COUNT(DISTINCT ap.approver_user_id)::int FROM approvals ap WHERE ap.lifecycle_event_id=le.id AND ap.decision='APPROVED') approval_count FROM lifecycle_events le WHERE le.organization_id=$1 AND le.asset_id=$2 ORDER BY le.occurred_at ASC,le.created_at ASC`,[s.organizationId,assetId]);
     return NextResponse.json({assetId,projectId:asset.rows[0].project_id,state:evaluateLifecycle(events.rows),events:events.rows});
   }catch(e:any){return NextResponse.json({error:e.message},{status:e.status||400})}
 }
