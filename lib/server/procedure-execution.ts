@@ -53,6 +53,24 @@ async function evaluateExpected(organizationId:string,projectId:string,step:any,
   const rule=step.expected_state||{};const obs=await latestObservation(organizationId,projectId,step.asset_id||null,rule,client);return evaluateRule(rule,obs);
 }
 
+async function recordPrerequisiteException(c:any,input:{organizationId:string;projectId:string;procedureId:string;step:any;runId:string;stepRunId:string;results:RuleResult[]}){
+  const severity=input.step.is_blocking?'BLOCK':'WARNING';
+  await c.query(`INSERT INTO operational_exceptions(organization_id,project_id,asset_id,procedure_id,procedure_step_id,procedure_run_id,step_run_id,exception_type,severity,expected_state,actual_state,status,details) VALUES($1,$2,$3,$4,$5,$6,$7,'PREREQUISITE_NOT_SATISFIED',$8,$9::jsonb,'{}'::jsonb,'OPEN',$10::jsonb)`,[input.organizationId,input.projectId,input.step.asset_id||null,input.procedureId,input.step.id,input.runId,input.stepRunId,severity,JSON.stringify(input.step.prerequisites||{}),JSON.stringify({results:input.results})]);
+}
+
+async function advanceAfterStep(c:any,input:{organizationId:string;run:any;step:any;userId:string}){
+  const next=await c.query<any>(`SELECT * FROM operational_procedure_steps WHERE organization_id=$1 AND procedure_id=$2 AND sequence_no>$3 ORDER BY sequence_no LIMIT 1`,[input.organizationId,input.run.procedure_id,input.step.sequence_no]);
+  if(!next.rows[0]){
+    await c.query(`UPDATE operational_procedure_runs SET status='COMPLETED',current_step_id=NULL,completed_at=now(),updated_at=now() WHERE id=$1`,[input.run.id]);
+    return{status:'COMPLETED' as const,nextStep:null,prerequisites:[] as RuleResult[]};
+  }
+  const n=next.rows[0];const prereq=await evaluatePrerequisites(input.organizationId,input.run.project_id,n,c);const blocked=!prereq.pass&&n.is_blocking;
+  const nsr=await c.query<any>(`INSERT INTO operational_step_runs(organization_id,project_id,procedure_run_id,procedure_step_id,status,expected_state,verification_result,started_by,started_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,now()) ON CONFLICT(procedure_run_id,procedure_step_id) DO UPDATE SET status=EXCLUDED.status,verification_result=EXCLUDED.verification_result,updated_at=now() RETURNING *`,[input.organizationId,input.run.project_id,input.run.id,n.id,blocked?'BLOCKED':'READY',JSON.stringify(n.expected_state||{}),JSON.stringify({prerequisites:prereq.results}),input.userId]);
+  await c.query(`UPDATE operational_procedure_runs SET status=$1,current_step_id=$2,updated_at=now() WHERE id=$3`,[blocked?'BLOCKED':'RUNNING',n.id,input.run.id]);
+  if(!prereq.pass)await recordPrerequisiteException(c,{organizationId:input.organizationId,projectId:input.run.project_id,procedureId:input.run.procedure_id,step:n,runId:input.run.id,stepRunId:nsr.rows[0].id,results:prereq.results});
+  return{status:(blocked?'BLOCKED':'RUNNING') as 'BLOCKED'|'RUNNING',nextStep:n.step_code,prerequisites:prereq.results};
+}
+
 export async function procedureSteps(organizationId:string,projectIds:string[],procedureId?:string){
   if(!projectIds.length)return[];
   const values:any[]=[organizationId,projectIds];let extra='';
@@ -71,7 +89,7 @@ export async function procedureRunDetail(organizationId:string,projectIds:string
   if(!projectIds.length||!(await procedureExecutionSchemaReady()))return null;
   const r=await query<any>(`SELECT r.id::text,r.project_id::text,r.procedure_id::text,r.execution_mode,r.status,r.current_step_id::text,r.started_at,r.completed_at,r.aborted_at,r.context,r.created_at,p.procedure_code,p.procedure_type,p.title procedure_title,p.version FROM operational_procedure_runs r JOIN operational_procedures p ON p.id=r.procedure_id AND p.organization_id=r.organization_id WHERE r.id=$1 AND r.organization_id=$2 AND r.project_id=ANY($3::uuid[]) LIMIT 1`,[runId,organizationId,projectIds]);
   if(!r.rows[0])return null;
-  const steps=await query<any>(`SELECT ps.id::text procedure_step_id,ps.sequence_no,ps.step_code,ps.title,ps.instruction,ps.actor_role,ps.asset_id::text,ps.touchpoint_id::text,ps.prerequisites,ps.expected_state,ps.verification,ps.failure_branch_step_code,ps.is_blocking,a.asset_code,a.name asset_name,t.touchpoint_code,t.name touchpoint_name,sr.id::text step_run_id,sr.status step_run_status,sr.observed_state,sr.verification_result,sr.operator_note,sr.started_at step_started_at,sr.completed_at step_completed_at FROM operational_procedure_steps ps LEFT JOIN assets a ON a.id=ps.asset_id LEFT JOIN operational_touchpoints t ON t.id=ps.touchpoint_id LEFT JOIN operational_step_runs sr ON sr.procedure_run_id=$1 AND sr.procedure_step_id=ps.id AND sr.organization_id=$2 WHERE ps.procedure_id=$4 AND ps.organization_id=$2 ORDER BY ps.sequence_no`,[runId,organizationId,projectIds,r.rows[0].procedure_id]);
+  const steps=await query<any>(`SELECT ps.id::text procedure_step_id,ps.sequence_no,ps.step_code,ps.title,ps.instruction,ps.actor_role,ps.asset_id::text,ps.touchpoint_id::text,ps.prerequisites,ps.expected_state,ps.verification,ps.failure_branch_step_code,ps.is_blocking,a.asset_code,a.name asset_name,t.touchpoint_code,t.name touchpoint_name,sr.id::text step_run_id,sr.status step_run_status,sr.observed_state,sr.verification_result,sr.operator_note,sr.started_at step_started_at,sr.completed_at step_completed_at FROM operational_procedure_steps ps LEFT JOIN assets a ON a.id=ps.asset_id LEFT JOIN operational_touchpoints t ON t.id=ps.touchpoint_id LEFT JOIN operational_step_runs sr ON sr.procedure_run_id=$1 AND sr.procedure_step_id=ps.id AND sr.organization_id=$2 WHERE ps.procedure_id=$3 AND ps.organization_id=$2 ORDER BY ps.sequence_no`,[runId,organizationId,r.rows[0].procedure_id]);
   return{...r.rows[0],steps:steps.rows};
 }
 
@@ -100,7 +118,7 @@ export async function startProcedureRun(input:{organizationId:string;projectId:s
     const step=first.rows[0];const prereq=await evaluatePrerequisites(input.organizationId,input.projectId,step,c);const blocked=!prereq.pass&&step.is_blocking;
     const run=await c.query<any>(`INSERT INTO operational_procedure_runs(organization_id,project_id,procedure_id,execution_mode,status,current_step_id,initiated_by,started_at,context) VALUES($1,$2,$3,'LIVE',$4,$5,$6,now(),$7::jsonb) RETURNING *`,[input.organizationId,input.projectId,input.procedureId,blocked?'BLOCKED':'RUNNING',step.id,input.userId,JSON.stringify({initialPrerequisiteEvaluation:prereq.results})]);
     const sr=await c.query<any>(`INSERT INTO operational_step_runs(organization_id,project_id,procedure_run_id,procedure_step_id,status,expected_state,verification_result,started_by,started_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,now()) RETURNING *`,[input.organizationId,input.projectId,run.rows[0].id,step.id,blocked?'BLOCKED':'READY',JSON.stringify(step.expected_state||{}),JSON.stringify({prerequisites:prereq.results}),input.userId]);
-    if(blocked){await c.query(`INSERT INTO operational_exceptions(organization_id,project_id,asset_id,procedure_id,procedure_step_id,procedure_run_id,step_run_id,exception_type,severity,expected_state,actual_state,status,details) VALUES($1,$2,$3,$4,$5,$6,$7,'PREREQUISITE_NOT_SATISFIED','BLOCK',$8::jsonb,'{}'::jsonb,'OPEN',$9::jsonb)`,[input.organizationId,input.projectId,step.asset_id||null,input.procedureId,step.id,run.rows[0].id,sr.rows[0].id,JSON.stringify(step.prerequisites||{}),JSON.stringify({results:prereq.results})])}
+    if(!prereq.pass)await recordPrerequisiteException(c,{organizationId:input.organizationId,projectId:input.projectId,procedureId:input.procedureId,step,runId:run.rows[0].id,stepRunId:sr.rows[0].id,results:prereq.results});
     return run.rows[0];
   });
 }
@@ -118,19 +136,23 @@ export async function verifyCurrentStep(input:{organizationId:string;projectIds:
     const machineRule=expected.machineEvaluated;const passed=machineRule?expected.status==='PASS':input.manualConfirmed;
     if(passed){
       await c.query(`UPDATE operational_step_runs SET status='VERIFIED',observed_state=$1::jsonb,verification_result=$2::jsonb,operator_note=$3,completed_by=$4,completed_at=now(),updated_at=now() WHERE id=$5`,[JSON.stringify({pointKey:expected.pointKey,value:expected.observed,quality:expected.quality,observedAt:expected.observedAt}),JSON.stringify(expected),input.note||null,input.userId,stepRun.id]);
-      const next=await c.query<any>(`SELECT * FROM operational_procedure_steps WHERE organization_id=$1 AND procedure_id=$2 AND sequence_no>$3 ORDER BY sequence_no LIMIT 1`,[input.organizationId,run.procedure_id,step.sequence_no]);
-      if(!next.rows[0]){await c.query(`UPDATE operational_procedure_runs SET status='COMPLETED',current_step_id=NULL,completed_at=now(),updated_at=now() WHERE id=$1`,[run.id]);return{status:'COMPLETED',runId:run.id,verifiedStep:step.step_code,nextStep:null,verification:expected}}
-      const n=next.rows[0];const prereq=await evaluatePrerequisites(input.organizationId,run.project_id,n,c);const blocked=!prereq.pass&&n.is_blocking;
-      const nsr=await c.query<any>(`INSERT INTO operational_step_runs(organization_id,project_id,procedure_run_id,procedure_step_id,status,expected_state,verification_result,started_by,started_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,now()) ON CONFLICT(procedure_run_id,procedure_step_id) DO UPDATE SET status=EXCLUDED.status,verification_result=EXCLUDED.verification_result,updated_at=now() RETURNING *`,[input.organizationId,run.project_id,run.id,n.id,blocked?'BLOCKED':'READY',JSON.stringify(n.expected_state||{}),JSON.stringify({prerequisites:prereq.results}),input.userId]);
-      await c.query(`UPDATE operational_procedure_runs SET status=$1,current_step_id=$2,updated_at=now() WHERE id=$3`,[blocked?'BLOCKED':'RUNNING',n.id,run.id]);
-      if(blocked)await c.query(`INSERT INTO operational_exceptions(organization_id,project_id,asset_id,procedure_id,procedure_step_id,procedure_run_id,step_run_id,exception_type,severity,expected_state,actual_state,status,details) VALUES($1,$2,$3,$4,$5,$6,$7,'PREREQUISITE_NOT_SATISFIED','BLOCK',$8::jsonb,'{}'::jsonb,'OPEN',$9::jsonb)`,[input.organizationId,run.project_id,n.asset_id||null,run.procedure_id,n.id,run.id,nsr.rows[0].id,JSON.stringify(n.prerequisites||{}),JSON.stringify({results:prereq.results})]);
-      return{status:blocked?'BLOCKED':'RUNNING',runId:run.id,verifiedStep:step.step_code,nextStep:n.step_code,verification:expected,prerequisites:prereq.results};
+      const advanced=await advanceAfterStep(c,{organizationId:input.organizationId,run,step,userId:input.userId});
+      return{...advanced,runId:run.id,verifiedStep:step.step_code,verification:expected};
     }
     const severity=step.is_blocking?'BLOCK':'WARNING';
     await c.query(`UPDATE operational_step_runs SET status=$1,observed_state=$2::jsonb,verification_result=$3::jsonb,operator_note=$4,completed_by=$5,completed_at=now(),updated_at=now() WHERE id=$6`,[step.is_blocking?'BLOCKED':'FAILED',JSON.stringify({pointKey:expected.pointKey,value:expected.observed,quality:expected.quality,observedAt:expected.observedAt}),JSON.stringify(expected),input.note||null,input.userId,stepRun.id]);
     const ex=await c.query<any>(`INSERT INTO operational_exceptions(organization_id,project_id,asset_id,procedure_id,procedure_step_id,procedure_run_id,step_run_id,exception_type,severity,expected_state,actual_state,status,details) VALUES($1,$2,$3,$4,$5,$6,$7,'EXPECTED_ACTUAL_MISMATCH',$8,$9::jsonb,$10::jsonb,'OPEN',$11::jsonb) RETURNING id`,[input.organizationId,run.project_id,step.asset_id||null,run.procedure_id,step.id,run.id,stepRun.id,severity,JSON.stringify(step.expected_state||{}),JSON.stringify({pointKey:expected.pointKey,value:expected.observed,quality:expected.quality,observedAt:expected.observedAt}),JSON.stringify({verification:expected,operatorNote:input.note||null})]);
-    if(step.failure_branch_step_code){const br=await c.query<any>(`SELECT id,step_code FROM operational_procedure_steps WHERE organization_id=$1 AND procedure_id=$2 AND step_code=$3 LIMIT 1`,[input.organizationId,run.procedure_id,step.failure_branch_step_code]);if(br.rows[0])await c.query(`UPDATE operational_procedure_runs SET status='BLOCKED',current_step_id=$1,updated_at=now() WHERE id=$2`,[br.rows[0].id,run.id]);else await c.query(`UPDATE operational_procedure_runs SET status='BLOCKED',updated_at=now() WHERE id=$1`,[run.id])}else await c.query(`UPDATE operational_procedure_runs SET status='BLOCKED',updated_at=now() WHERE id=$1`,[run.id]);
-    return{status:'BLOCKED',runId:run.id,failedStep:step.step_code,failureBranch:step.failure_branch_step_code||null,exceptionId:ex.rows[0].id,verification:expected};
+    if(step.failure_branch_step_code){
+      const br=await c.query<any>(`SELECT id,step_code FROM operational_procedure_steps WHERE organization_id=$1 AND procedure_id=$2 AND step_code=$3 LIMIT 1`,[input.organizationId,run.procedure_id,step.failure_branch_step_code]);
+      if(br.rows[0])await c.query(`UPDATE operational_procedure_runs SET status='BLOCKED',current_step_id=$1,updated_at=now() WHERE id=$2`,[br.rows[0].id,run.id]);else await c.query(`UPDATE operational_procedure_runs SET status='BLOCKED',updated_at=now() WHERE id=$1`,[run.id]);
+      return{status:'BLOCKED' as const,runId:run.id,failedStep:step.step_code,failureBranch:step.failure_branch_step_code,exceptionId:ex.rows[0].id,verification:expected};
+    }
+    if(step.is_blocking){
+      await c.query(`UPDATE operational_procedure_runs SET status='BLOCKED',updated_at=now() WHERE id=$1`,[run.id]);
+      return{status:'BLOCKED' as const,runId:run.id,failedStep:step.step_code,failureBranch:null,exceptionId:ex.rows[0].id,verification:expected};
+    }
+    const advanced=await advanceAfterStep(c,{organizationId:input.organizationId,run,step,userId:input.userId});
+    return{...advanced,runId:run.id,warningStep:step.step_code,exceptionId:ex.rows[0].id,verification:expected,nonBlockingWarning:true};
   });
 }
 
