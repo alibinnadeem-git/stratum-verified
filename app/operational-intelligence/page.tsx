@@ -1,0 +1,39 @@
+import Link from 'next/link';
+import OperationalIntelligenceConsole from '@/components/OperationalIntelligenceConsole';
+import {accessibleProjectIds} from '@/lib/server/access';
+import {requirePageSession} from '@/lib/server/page-auth';
+import {liveAssets,liveProjects} from '@/lib/server/live-views';
+import {latestOperationalObservations,operationalDependencies,operationalExceptions,operationalOverview,operationalProcedures,operationalTouchpoints} from '@/lib/server/operational-intelligence';
+
+export const dynamic='force-dynamic';
+const date=(d:Date|string|null)=>d?new Date(d).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}):'—';
+const value=(x:any)=>typeof x==='string'?x:JSON.stringify(x);
+
+export default async function OperationalIntelligencePage(){
+ const session=await requirePageSession('/operational-intelligence',['SUPER_ADMIN','ORG_ADMIN','PROJECT_MANAGER','TECHNICIAN','INSPECTOR']);
+ const projectIds=await accessibleProjectIds(session);
+ const [overview,assets,projects,touchpoints,procedures,dependencies,observations,exceptions]=await Promise.all([
+  operationalOverview(session.organizationId,projectIds),liveAssets(session.organizationId,projectIds),liveProjects(session.organizationId,projectIds),operationalTouchpoints(session.organizationId,projectIds),operationalProcedures(session.organizationId,projectIds),operationalDependencies(session.organizationId,projectIds),latestOperationalObservations(session.organizationId,projectIds),operationalExceptions(session.organizationId,projectIds)
+ ]);
+ const consoleAssets=assets.map(a=>({id:a.id,projectId:projects.find(p=>p.project_code===a.project_code)?.id||'',projectCode:a.project_code,assetCode:a.asset_code,name:a.name,assetType:a.asset_type})).filter(a=>a.projectId);
+ const consoleProjects=projects.map(p=>({id:p.id,projectCode:p.project_code,name:p.name}));
+ return <>
+  <div className="page-head"><div><div className="eyebrow">L7 · STRATUM Operational Intelligence</div><h1 className="title">Understand how infrastructure is connected, operated and changed.</h1><p className="subtitle">Human Touchpoints, SOP/MOP/EOP procedure intelligence, near-real-time State Iterations, topology impact tracing and operational exceptions extend the STRATUM Twin without changing the verified engineering baseline.</p></div><div className="button-row"><Link className="action secondary" href="/twin">Open STRATUM Twin</Link><span className="badge">{overview.schemaReady?'OPERATIONAL GRAPH ACTIVE':'SCHEMA ACTIVATION PENDING'}</span></div></div>
+  <div className="grid four">
+   <div className="stat"><span>Human Touchpoints</span><strong>{overview.touchpointCount}</strong><small>Physical/digital operator interaction points</small></div>
+   <div className="stat"><span>Procedures</span><strong>{overview.procedureCount}</strong><small>{overview.approvedProcedureCount} approved SOP/MOP/EOP records</small></div>
+   <div className="stat"><span>Topology edges</span><strong>{overview.dependencyCount}</strong><small>Feeds · Cools · Depends on · Redundancy</small></div>
+   <div className="stat"><span>Open exceptions</span><strong>{overview.openExceptionCount}</strong><small>{overview.criticalExceptionCount} critical/blocking</small></div>
+  </div>
+  <div className="grid two" style={{marginTop:16}}>
+   <section className="card"><div className="section-head"><div><div className="eyebrow">Live Twin</div><h2>Latest State Iterations</h2></div><span className="badge">{overview.observationCount} observations</span></div>{observations.slice(0,12).map(o=><div className="notice" key={`${o.asset_id}-${o.point_key}`} style={{marginTop:10}}><strong>{o.asset_code} · {o.point_key}</strong><span>{value(o.value_json)} · {o.source_system} · {o.quality} · {date(o.observed_at)}</span></div>)}{!observations.length&&<p className="muted">No live State Iterations recorded yet. Telemetry and operator observations will appear here without changing the engineering baseline.</p>}</section>
+   <section className="card"><div className="section-head"><div><div className="eyebrow">Expected vs Actual</div><h2>Operational exceptions</h2></div><span className="badge">{overview.criticalExceptionCount} critical</span></div>{exceptions.slice(0,12).map(e=><div className="notice" key={e.id} style={{marginTop:10}}><strong>{e.severity} · {e.exception_type}</strong><span>{e.asset_code?`${e.asset_code} · ${e.asset_name} · `:''}{e.status} · {date(e.created_at)}</span></div>)}{!exceptions.length&&<p className="muted">No unresolved expected-vs-actual exceptions are recorded.</p>}</section>
+  </div>
+  <div className="grid two" style={{marginTop:16}}>
+   <section className="card table-card"><div className="section-head"><div><div className="eyebrow">Human Touchpoints</div><h2>Operator interaction registry</h2></div></div><table className="table"><thead><tr><th>Touchpoint</th><th>STRATUM Asset</th><th>State</th><th>Controls</th></tr></thead><tbody>{touchpoints.slice(0,20).map(t=><tr key={t.id}><td><strong>{t.touchpoint_code}</strong><div className="muted">{t.name} · {t.touchpoint_type}</div></td><td><Link href={`/assets/${t.asset_id}`}>{t.asset_code} · {t.asset_name}</Link></td><td>{t.current_state||'—'}</td><td>{t.loto_required?<span className="pending">LOTO</span>:null}<div className="muted">{t.required_role||'Role not assigned'}</div></td></tr>)}{!touchpoints.length&&<tr><td colSpan={4}><span className="muted">No Human Touchpoints registered yet.</span></td></tr>}</tbody></table></section>
+   <section className="card table-card"><div className="section-head"><div><div className="eyebrow">Procedure Intelligence</div><h2>SOP · MOP · EOP registry</h2></div></div><table className="table"><thead><tr><th>Procedure</th><th>Project</th><th>Steps</th><th>Status</th></tr></thead><tbody>{procedures.slice(0,20).map(p=><tr key={p.id}><td><strong>{p.procedure_code} · {p.procedure_type}</strong><div className="muted">{p.title} · v{p.version}</div></td><td>{p.project_code}</td><td>{p.step_count}<div className="muted">{p.touchpoint_step_count} touchpoint-linked</div></td><td><span className={p.status==='APPROVED'?'proof':'pending'}>{p.status}</span></td></tr>)}{!procedures.length&&<tr><td colSpan={4}><span className="muted">No machine-readable procedures registered yet.</span></td></tr>}</tbody></table></section>
+  </div>
+  <section className="card table-card" style={{marginTop:16}}><div className="section-head"><div><div className="eyebrow">STRATUM Topology</div><h2>Operational asset relationships</h2><p className="muted">These relationships power impact analysis, dependency tracing and the future Procedure Simulation engine.</p></div><span className="badge">{dependencies.length} loaded</span></div><table className="table"><thead><tr><th>Source</th><th>Relationship</th><th>Target</th><th>Criticality</th></tr></thead><tbody>{dependencies.slice(0,30).map(d=><tr key={d.id}><td>{d.source_asset_code} · {d.source_asset_name}</td><td><strong>{d.relationship_type}</strong></td><td>{d.target_asset_code} · {d.target_asset_name}</td><td>{d.criticality}</td></tr>)}{!dependencies.length&&<tr><td colSpan={4}><span className="muted">No operational topology relationships have been recorded yet.</span></td></tr>}</tbody></table></section>
+  <div style={{marginTop:16}}><OperationalIntelligenceConsole schemaReady={overview.schemaReady} projects={consoleProjects} assets={consoleAssets}/></div>
+ </>;
+}

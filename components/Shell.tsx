@@ -3,7 +3,7 @@ import type {ReactNode} from 'react';
 import {requireSession,Session} from '@/lib/server/auth';
 const authenticatedGroups=[
  {label:'Workspace',links:[['/','Overview'],['/twin','STRATUM Twin'],['/projects','Projects'],['/sites','Sites'],['/assets','Asset Passports']]},
- {label:'Operations',links:[['/workflows','Operational Workflow'],['/maintenance','Maintenance'],['/evidence','Evidence']]},
+ {label:'Operations',links:[['/operational-intelligence','Operational Intelligence'],['/workflows','Operational Workflow'],['/maintenance','Maintenance'],['/evidence','Evidence']]},
  {label:'Trust',links:[['/provenance','Provenance'],['/verify','Verify Record'],['/chain','DIRs Explorer']]},
  {label:'Security',links:[['/identity','My Security Identity']]}
 ];
