@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import OperationalIntelligenceConsole from '@/components/OperationalIntelligenceConsole';
+import ProcedureGovernancePanel from '@/components/ProcedureGovernancePanel';
 import {accessibleProjectIds} from '@/lib/server/access';
 import {requirePageSession} from '@/lib/server/page-auth';
 import {liveAssets,liveProjects} from '@/lib/server/live-views';
@@ -39,6 +40,7 @@ export default async function OperationalIntelligencePage(){
    <section className="card table-card"><div className="section-head"><div><div className="eyebrow">Procedure Intelligence</div><h2>SOP · MOP · EOP registry</h2></div></div><table className="table"><thead><tr><th>Procedure</th><th>Project</th><th>Steps</th><th>Status</th></tr></thead><tbody>{procedures.slice(0,20).map(p=><tr key={p.id}><td><strong>{p.procedure_code} · {p.procedure_type}</strong><div className="muted">{p.title} · v{p.version}</div></td><td>{p.project_code}</td><td>{p.step_count}<div className="muted">{p.touchpoint_step_count} touchpoint-linked</div></td><td><span className={p.status==='APPROVED'?'proof':'pending'}>{p.status}</span></td></tr>)}{!procedures.length&&<tr><td colSpan={4}><span className="muted">No machine-readable procedures registered yet.</span></td></tr>}</tbody></table></section>
   </div>
   <section className="card table-card" style={{marginTop:16}}><div className="section-head"><div><div className="eyebrow">STRATUM Topology</div><h2>Operational asset relationships</h2><p className="muted">These relationships power impact analysis, dependency tracing and Procedure Simulation.</p></div><span className="badge">{dependencies.length} loaded</span></div><table className="table"><thead><tr><th>Source</th><th>Relationship</th><th>Target</th><th>Criticality</th></tr></thead><tbody>{dependencies.slice(0,30).map(d=><tr key={d.id}><td>{d.source_asset_code} · {d.source_asset_name}</td><td><strong>{d.relationship_type}</strong></td><td>{d.target_asset_code} · {d.target_asset_name}</td><td>{d.criticality}</td></tr>)}{!dependencies.length&&<tr><td colSpan={4}><span className="muted">No operational topology relationships have been recorded yet.</span></td></tr>}</tbody></table></section>
+  <div style={{marginTop:16}}><ProcedureGovernancePanel procedures={consoleProcedures}/></div>
   <div style={{marginTop:16}}><OperationalIntelligenceConsole schemaReady={overview.schemaReady} executionReady={executionReady} projects={consoleProjects} assets={consoleAssets} procedures={consoleProcedures} touchpoints={consoleTouchpoints} runs={consoleRuns}/></div>
  </>;
 }
