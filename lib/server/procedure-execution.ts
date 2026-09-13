@@ -1,3 +1,4 @@
+import type {PoolClient} from 'pg';
 import {query,tx} from './db';
 
 export type RuleResult={status:'PASS'|'FAIL'|'NO_DATA'|'MANUAL';machineEvaluated:boolean;reason:string;pointKey?:string;expected?:unknown;observed?:unknown;quality?:string;observedAt?:string};
@@ -32,15 +33,14 @@ export function evaluateRule(rule:any,observation:any|null):RuleResult{
   return{status:pass?'PASS':'FAIL',machineEvaluated:true,reason:reasons.join('; '),pointKey,expected,observed,quality,observedAt:new Date(observation.observed_at).toISOString()};
 }
 
-async function latestObservation(organizationId:string,projectId:string,assetId:string|null,rule:any,client?:any){
+async function latestObservation(organizationId:string,projectId:string,assetId:string|null,rule:any,client?:PoolClient){
   const pointKey=rule&&typeof rule==='object'&&typeof rule.pointKey==='string'?rule.pointKey:null;
   if(!assetId||!pointKey)return null;
-  const q=client||{query:(text:string,values:unknown[])=>query(text,values)};
-  const r=await q.query(`SELECT value_json,quality,observed_at,source_system,point_key FROM operational_observations WHERE organization_id=$1 AND project_id=$2 AND asset_id=$3 AND point_key=$4 ORDER BY observed_at DESC LIMIT 1`,[organizationId,projectId,assetId,pointKey]);
+  const r=client?await client.query<any>(`SELECT value_json,quality,observed_at,source_system,point_key FROM operational_observations WHERE organization_id=$1 AND project_id=$2 AND asset_id=$3 AND point_key=$4 ORDER BY observed_at DESC LIMIT 1`,[organizationId,projectId,assetId,pointKey]):await query<any>(`SELECT value_json,quality,observed_at,source_system,point_key FROM operational_observations WHERE organization_id=$1 AND project_id=$2 AND asset_id=$3 AND point_key=$4 ORDER BY observed_at DESC LIMIT 1`,[organizationId,projectId,assetId,pointKey]);
   return r.rows[0]||null;
 }
 
-async function evaluatePrerequisites(organizationId:string,projectId:string,step:any,client?:any){
+async function evaluatePrerequisites(organizationId:string,projectId:string,step:any,client?:PoolClient){
   const p=step.prerequisites||{};
   const rules=Array.isArray(p.conditions)?p.conditions:(p.pointKey?[p]:[]);
   if(!rules.length)return{pass:true,results:[{status:'MANUAL',machineEvaluated:false,reason:'No machine prerequisites defined.'} as RuleResult]};
@@ -49,16 +49,16 @@ async function evaluatePrerequisites(organizationId:string,projectId:string,step
   return{pass:results.every(x=>x.status==='PASS'||x.status==='MANUAL'),results};
 }
 
-async function evaluateExpected(organizationId:string,projectId:string,step:any,client?:any){
+async function evaluateExpected(organizationId:string,projectId:string,step:any,client?:PoolClient){
   const rule=step.expected_state||{};const obs=await latestObservation(organizationId,projectId,step.asset_id||null,rule,client);return evaluateRule(rule,obs);
 }
 
-async function recordPrerequisiteException(c:any,input:{organizationId:string;projectId:string;procedureId:string;step:any;runId:string;stepRunId:string;results:RuleResult[]}){
+async function recordPrerequisiteException(c:PoolClient,input:{organizationId:string;projectId:string;procedureId:string;step:any;runId:string;stepRunId:string;results:RuleResult[]}){
   const severity=input.step.is_blocking?'BLOCK':'WARNING';
   await c.query(`INSERT INTO operational_exceptions(organization_id,project_id,asset_id,procedure_id,procedure_step_id,procedure_run_id,step_run_id,exception_type,severity,expected_state,actual_state,status,details) VALUES($1,$2,$3,$4,$5,$6,$7,'PREREQUISITE_NOT_SATISFIED',$8,$9::jsonb,'{}'::jsonb,'OPEN',$10::jsonb)`,[input.organizationId,input.projectId,input.step.asset_id||null,input.procedureId,input.step.id,input.runId,input.stepRunId,severity,JSON.stringify(input.step.prerequisites||{}),JSON.stringify({results:input.results})]);
 }
 
-async function advanceAfterStep(c:any,input:{organizationId:string;run:any;step:any;userId:string}){
+async function advanceAfterStep(c:PoolClient,input:{organizationId:string;run:any;step:any;userId:string}){
   const next=await c.query<any>(`SELECT * FROM operational_procedure_steps WHERE organization_id=$1 AND procedure_id=$2 AND sequence_no>$3 ORDER BY sequence_no LIMIT 1`,[input.organizationId,input.run.procedure_id,input.step.sequence_no]);
   if(!next.rows[0]){
     await c.query(`UPDATE operational_procedure_runs SET status='COMPLETED',current_step_id=NULL,completed_at=now(),updated_at=now() WHERE id=$1`,[input.run.id]);
