@@ -10,13 +10,15 @@ This release extends L7 STRATUM Operational Intelligence with controlled, human-
 - Machine-checkable prerequisite rules using current STRATUM Live Iterations.
 - Expected-vs-Actual post-action verification.
 - Explicit STOP/BLOCK behavior for failed blocking checks.
+- Non-blocking mismatches create WARNING exceptions and continue unless an explicit failure branch is defined.
 - Failure/recovery branch routing through `failure_branch_step_code`.
 - STRATUM Procedure Simulation with PASS / WARNING / BLOCK readiness output.
 - Procedure run and step-run execution ledger.
 - Controlled procedure governance: DRAFT → REVIEW → APPROVED → RETIRED.
+- Every new procedure is created as DRAFT.
+- REVIEW → APPROVED requires a project-manager / organization-admin role and an approver different from the procedure author.
 - Approved procedures become immutable; changes require a new version.
 - Only approved procedures can enter live execution.
-- Project-manager / organization-admin approval gate for executable procedures.
 - Audit records for procedure creation, step creation, approval, execution, verification, resume and abort actions.
 
 ## Safety boundary
@@ -25,6 +27,7 @@ This release extends L7 STRATUM Operational Intelligence with controlled, human-
 - Operator action remains outside the software control boundary.
 - STRATUM checks prerequisites before execution and verifies expected post-action state from Live Iterations when a machine-verifiable rule exists.
 - When a blocking prerequisite or Expected-vs-Actual check fails, the run is BLOCKED and an operational exception is created.
+- When a non-blocking check fails, a WARNING exception is retained and the run advances unless the step explicitly defines a failure/recovery branch.
 - Failure/recovery branches require explicit human resume.
 - Live State Iterations never rewrite the Verified engineering baseline.
 - Existing lifecycle records and DIRs remain authoritative proof layers.
@@ -59,7 +62,7 @@ Migration 008 has been successfully prepared and executed on a temporary Neon br
 
 Feature branch: `feature/procedure-execution-v2`.
 
-The branch compiled successfully through the execution UI and governance API commits. The final Vercel status for the documentation/page-assembly head may be blocked by the account build-rate limit rather than an application compiler failure; GitHub CI should remain the merge gate before production promotion.
+Functional branch commits for the execution engine, APIs, UI, governance flow and the hardened semantics compiled successfully in Vercel preview where the platform accepted a build. The Vercel account subsequently reached its build-rate limit, so a rate-limit status is not treated as an application compiler failure. Production promotion still requires explicit database approval and merge approval.
 
 ## Next slices
 
