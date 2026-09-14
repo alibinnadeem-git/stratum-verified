@@ -13,7 +13,7 @@ export async function procedureExecutionSchemaReady(){
 async function latestObservation(organizationId:string,projectId:string,assetId:string|null,rule:any,client?:PoolClient){
   const pointKey=rule&&typeof rule==='object'&&typeof rule.pointKey==='string'?rule.pointKey:null;
   if(!assetId||!pointKey)return null;
-  const sql=`SELECT value_json,quality,observed_at,source_system,point_key,semantic_key,engineering_unit,confidence,telemetry_binding_id::text FROM operational_observations WHERE organization_id=$1 AND project_id=$2 AND asset_id=$3 AND point_key=$4 ORDER BY observed_at DESC LIMIT 1`;
+  const sql=`SELECT value_json,quality,observed_at,source_system,point_key FROM operational_observations WHERE organization_id=$1 AND project_id=$2 AND asset_id=$3 AND point_key=$4 ORDER BY observed_at DESC LIMIT 1`;
   const r=client?await client.query<any>(sql,[organizationId,projectId,assetId,pointKey]):await query<any>(sql,[organizationId,projectId,assetId,pointKey]);
   return r.rows[0]||null;
 }
