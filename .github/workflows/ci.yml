@@ -16,6 +16,8 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package.json
       - run: npm install --no-audit --no-fund
+      - name: Telemetry semantic contract
+        run: npm run qa:telemetry
       - name: TypeScript integrity
         run: npm run typecheck
       - name: Production build
