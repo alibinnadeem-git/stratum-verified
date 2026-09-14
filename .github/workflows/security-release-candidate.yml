@@ -23,6 +23,10 @@ jobs:
           cache-dependency-path: package.json
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Telemetry semantic and topology safety
+        run: |
+          npm run qa:telemetry
+          npm run qa:telemetry-topology
       - name: Production build
         run: npm run build
       - name: Verify release bundle exists
