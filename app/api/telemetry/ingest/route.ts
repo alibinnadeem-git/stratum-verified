@@ -4,7 +4,7 @@ import {requireSession} from '@/lib/server/auth';
 import {requireProjectRole} from '@/lib/server/access';
 import {appendAudit} from '@/lib/server/audit';
 import {query} from '@/lib/server/db';
-import {ingestTelemetryBatch} from '@/lib/server/telemetry';
+import {ingestTelemetryBatch,type RawTelemetrySample} from '@/lib/server/telemetry';
 
 const Sample=z.object({
   externalPointKey:z.string().min(1).max(240),
@@ -12,6 +12,8 @@ const Sample=z.object({
   quality:z.union([z.string().max(100),z.number().int()]).optional(),
   observedAt:z.string().datetime(),
   idempotencyKey:z.string().min(8).max(200).regex(/^[A-Za-z0-9_.:-]+$/).optional()
+}).superRefine((sample,ctx)=>{
+  if(!Object.prototype.hasOwnProperty.call(sample,'value'))ctx.addIssue({code:z.ZodIssueCode.custom,path:['value'],message:'Telemetry sample value is required.'});
 });
 const Body=z.object({sourceCode:z.string().min(2).max(100),samples:z.array(Sample).min(1).max(500)});
 const MAX_BODY_BYTES=1_000_000;
@@ -29,7 +31,8 @@ export async function POST(req:Request){
   const row=source.rows[0];
   if(!row)return NextResponse.json({error:'Telemetry source not found in this organization.'},{status:404});
   await requireProjectRole(session,row.project_id,['SUPER_ADMIN','ORG_ADMIN','PROJECT_MANAGER']);
-  const result=await ingestTelemetryBatch({organizationId:session.organizationId,sourceCode:body.sourceCode,samples:body.samples});
+  const samples:RawTelemetrySample[]=body.samples.map(sample=>({externalPointKey:sample.externalPointKey,value:sample.value,quality:sample.quality,observedAt:sample.observedAt,idempotencyKey:sample.idempotencyKey}));
+  const result=await ingestTelemetryBatch({organizationId:session.organizationId,sourceCode:body.sourceCode,samples});
   await appendAudit({organizationId:session.organizationId,actorUserId:session.userId,action:'TELEMETRY_BATCH_INGEST',entityType:'STRATUM_LIVE_ITERATION',entityId:row.id,metadata:{projectId:row.project_id,sourceCode:body.sourceCode,accepted:result.summary.accepted,duplicates:result.summary.duplicates,rejected:result.summary.rejected,authority:result.authority,truthBoundary:result.truthBoundary}});
   return NextResponse.json(result,{status:result.summary.accepted||result.summary.duplicates?200:422});
  }catch(e:any){
