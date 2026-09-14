@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "qa:telemetry": "node --experimental-strip-types scripts/qa-telemetry.mjs"
+    "qa:telemetry": "node --experimental-strip-types scripts/qa-telemetry.mjs",
+    "qa:telemetry-topology": "node scripts/qa-telemetry-topology.mjs"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.1.2",
