@@ -1,42 +1,20 @@
 import type {PoolClient} from 'pg';
 import {query,tx} from './db';
+import {evaluateObservationRule,type RuleResult} from '../procedure-rule-contract';
 
-export type RuleResult={status:'PASS'|'FAIL'|'NO_DATA'|'MANUAL';machineEvaluated:boolean;reason:string;pointKey?:string;expected?:unknown;observed?:unknown;quality?:string;observedAt?:string};
+export type {RuleResult} from '../procedure-rule-contract';
+export const evaluateRule=evaluateObservationRule;
 
 export async function procedureExecutionSchemaReady(){
   const r=await query<{ready:boolean}>(`SELECT to_regclass('public.operational_procedure_runs') IS NOT NULL AND to_regclass('public.operational_step_runs') IS NOT NULL AS ready`);
   return !!r.rows[0]?.ready;
 }
 
-function same(a:unknown,b:unknown){return JSON.stringify(a)===JSON.stringify(b)}
-function asNumber(v:unknown){const n=typeof v==='number'?v:Number(v);return Number.isFinite(n)?n:null}
-
-export function evaluateRule(rule:any,observation:any|null):RuleResult{
-  if(!rule||typeof rule!=='object'||Array.isArray(rule)||!Object.keys(rule).length)return{status:'MANUAL',machineEvaluated:false,reason:'No machine-verifiable rule defined.'};
-  const pointKey=typeof rule.pointKey==='string'?rule.pointKey:undefined;
-  if(!pointKey)return{status:'MANUAL',machineEvaluated:false,reason:'Rule has no pointKey; human verification is required.'};
-  if(!observation)return{status:'NO_DATA',machineEvaluated:true,reason:`No observation is available for ${pointKey}.`,pointKey};
-  const observed=observation.value_json;
-  const quality=String(observation.quality||'');
-  if(Array.isArray(rule.qualityIn)&&!rule.qualityIn.includes(quality))return{status:'FAIL',machineEvaluated:true,reason:`Observation quality ${quality} is not allowed.`,pointKey,observed,quality,observedAt:new Date(observation.observed_at).toISOString()};
-  if(typeof rule.maxAgeSeconds==='number'){
-    const age=(Date.now()-new Date(observation.observed_at).getTime())/1000;
-    if(age>rule.maxAgeSeconds)return{status:'FAIL',machineEvaluated:true,reason:`Observation is stale (${Math.round(age)}s old; maximum ${rule.maxAgeSeconds}s).`,pointKey,observed,quality,observedAt:new Date(observation.observed_at).toISOString()};
-  }
-  const expected=Object.prototype.hasOwnProperty.call(rule,'equals')?rule.equals:Object.prototype.hasOwnProperty.call(rule,'value')?rule.value:undefined;
-  let pass=true;let checks=0;const reasons:string[]=[];
-  if(expected!==undefined){checks++;const ok=same(observed,expected);pass=pass&&ok;reasons.push(ok?`equals ${JSON.stringify(expected)}`:`expected ${JSON.stringify(expected)}, observed ${JSON.stringify(observed)}`)}
-  if(Array.isArray(rule.oneOf)){checks++;const ok=rule.oneOf.some((x:unknown)=>same(x,observed));pass=pass&&ok;reasons.push(ok?'value is in allowed set':`observed ${JSON.stringify(observed)} is not in allowed set`)}
-  if(rule.min!==undefined){checks++;const n=asNumber(observed),min=asNumber(rule.min);const ok=n!==null&&min!==null&&n>=min;pass=pass&&ok;reasons.push(ok?`>= ${rule.min}`:`expected >= ${rule.min}, observed ${JSON.stringify(observed)}`)}
-  if(rule.max!==undefined){checks++;const n=asNumber(observed),max=asNumber(rule.max);const ok=n!==null&&max!==null&&n<=max;pass=pass&&ok;reasons.push(ok?`<= ${rule.max}`:`expected <= ${rule.max}, observed ${JSON.stringify(observed)}`)}
-  if(!checks)return{status:'MANUAL',machineEvaluated:false,reason:'Rule identifies a point but defines no comparison; human verification is required.',pointKey,observed,quality,observedAt:new Date(observation.observed_at).toISOString()};
-  return{status:pass?'PASS':'FAIL',machineEvaluated:true,reason:reasons.join('; '),pointKey,expected,observed,quality,observedAt:new Date(observation.observed_at).toISOString()};
-}
-
 async function latestObservation(organizationId:string,projectId:string,assetId:string|null,rule:any,client?:PoolClient){
   const pointKey=rule&&typeof rule==='object'&&typeof rule.pointKey==='string'?rule.pointKey:null;
   if(!assetId||!pointKey)return null;
-  const r=client?await client.query<any>(`SELECT value_json,quality,observed_at,source_system,point_key FROM operational_observations WHERE organization_id=$1 AND project_id=$2 AND asset_id=$3 AND point_key=$4 ORDER BY observed_at DESC LIMIT 1`,[organizationId,projectId,assetId,pointKey]):await query<any>(`SELECT value_json,quality,observed_at,source_system,point_key FROM operational_observations WHERE organization_id=$1 AND project_id=$2 AND asset_id=$3 AND point_key=$4 ORDER BY observed_at DESC LIMIT 1`,[organizationId,projectId,assetId,pointKey]);
+  const sql=`SELECT value_json,quality,observed_at,source_system,point_key FROM operational_observations WHERE organization_id=$1 AND project_id=$2 AND asset_id=$3 AND point_key=$4 ORDER BY observed_at DESC LIMIT 1`;
+  const r=client?await client.query<any>(sql,[organizationId,projectId,assetId,pointKey]):await query<any>(sql,[organizationId,projectId,assetId,pointKey]);
   return r.rows[0]||null;
 }
 
@@ -102,7 +80,9 @@ export async function simulateProcedure(organizationId:string,projectIds:string[
     const prereq=await evaluatePrerequisites(organizationId,p.rows[0].project_id,step);
     const expected=step.expected_state&&Object.keys(step.expected_state).length?await evaluateExpected(organizationId,p.rows[0].project_id,step):{status:'MANUAL',machineEvaluated:false,reason:'No machine-verifiable expected state.'};
     let readiness:'PASS'|'WARNING'|'BLOCK'='PASS';
-    if(!prereq.pass&&step.is_blocking)readiness='BLOCK';else if(!prereq.pass||expected.status==='NO_DATA'||expected.status==='MANUAL')readiness='WARNING';
+    const expectedFailed=expected.status==='FAIL';
+    if((!prereq.pass||expectedFailed)&&step.is_blocking)readiness='BLOCK';
+    else if(!prereq.pass||expectedFailed||expected.status==='NO_DATA'||expected.status==='MANUAL')readiness='WARNING';
     out.push({...step,readiness,prerequisiteResults:prereq.results,currentExpectedPointCheck:expected});
   }
   return{procedure:p.rows[0],summary:{pass:out.filter(x=>x.readiness==='PASS').length,warning:out.filter(x=>x.readiness==='WARNING').length,block:out.filter(x=>x.readiness==='BLOCK').length},steps:out};
