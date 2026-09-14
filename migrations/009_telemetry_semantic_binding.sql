@@ -56,6 +56,18 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_bindings_semantic
 CREATE INDEX IF NOT EXISTS idx_telemetry_bindings_source
   ON telemetry_point_bindings(organization_id, source_id, status);
 
+CREATE TABLE IF NOT EXISTS telemetry_binding_dependencies (
+  binding_id uuid NOT NULL REFERENCES telemetry_point_bindings(id) ON DELETE CASCADE,
+  dependency_id uuid NOT NULL REFERENCES operational_dependencies(id) ON DELETE CASCADE,
+  organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (binding_id, dependency_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_binding_dependencies_project
+  ON telemetry_binding_dependencies(organization_id, project_id, dependency_id);
+
 ALTER TABLE operational_observations
   ADD COLUMN IF NOT EXISTS telemetry_source_id uuid REFERENCES telemetry_sources(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS telemetry_binding_id uuid REFERENCES telemetry_point_bindings(id) ON DELETE SET NULL,
@@ -102,6 +114,8 @@ CREATE INDEX IF NOT EXISTS idx_operational_live_iterations_latest
 CREATE INDEX IF NOT EXISTS idx_operational_live_iterations_quality
   ON operational_live_iterations(organization_id, project_id, quality, observed_at DESC);
 
+COMMENT ON TABLE telemetry_binding_dependencies IS
+  'Optional links from an approved telemetry point mapping into the existing Operational Intelligence dependency topology; does not create a second graph.';
 COMMENT ON TABLE operational_live_iterations IS
   'Append-only STRATUM Live Iterations derived from governed telemetry bindings. Observational only; never rewrites the Verified engineering baseline.';
 COMMENT ON COLUMN operational_live_iterations.control_authority IS
